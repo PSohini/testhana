@@ -1,0 +1,251 @@
+schema="CORE_P08";
+query="
+with DRIVER as (
+	select
+		vbap.OPSYS  as SOURCE_SYSTEM_NAME
+		,vbap.MANDT as CLIENT_NUMBER
+		,vbap.VBELN as ORDER_NUMBER
+		,vbap.POSNR as ORDER_ITEM_NUMBER
+		,vbap.MATNR as MATERIAL_NUMBER
+		,vbap.VRKME as SALES_UNIT_OF_MEASURE_CODE
+	from DS21.ECCP08.\"inbound.ecc.p08.dv.conv::DV_VBAP\" AS vbap
+	where   vbap.MANDT = '430'
+		and vbap.OPTYPE <> 'D'
+	),
+
+SCHEDULED as (
+	select
+		DRIVER.SOURCE_SYSTEM_NAME
+		,DRIVER.CLIENT_NUMBER
+		,DRIVER.ORDER_NUMBER
+		,DRIVER.ORDER_ITEM_NUMBER
+		,sum( vbep.BMENG) AS CONFIRM_ITEM_QUANTITY
+	from DRIVER
+	join DS21.ECCP08.\"inbound.ecc.p08.dv.conv::DV_VBEP\" AS vbep
+		on  vbep.OPSYS = DRIVER.SOURCE_SYSTEM_NAME 
+		and vbep.MANDT = DRIVER.CLIENT_NUMBER 
+		and vbep.VBELN = DRIVER.ORDER_NUMBER 
+		and vbep.POSNR = DRIVER.ORDER_ITEM_NUMBER
+		and vbep.OPTYPE <> 'D'
+	group by
+		DRIVER.SOURCE_SYSTEM_NAME
+		,DRIVER.CLIENT_NUMBER
+		,DRIVER.ORDER_NUMBER
+		,DRIVER.ORDER_ITEM_NUMBER
+	),
+		
+BASE as (
+	select
+		vbap.OPSYS   as SOURCE_SYSTEM_NAME
+		,vbap.MANDT  as CLIENT_NUMBER
+		,tvapt.SPRAS as LANGUAGE_CODE
+		,vbap.VBELN  as ORDER_NUMBER
+		,vbap.POSNR  as ORDER_ITEM_NUMBER
+		,vbap.PSTYV  as ORDER_ITEM_CATEGORY_CODE
+		,tvapt.VTEXT as ORDER_ITEM_CATEGORY_DESCRIPTION
+		,vbap.MATNR  as MATERIAL_NUMBER
+		,vbap.ARKTX  as ORDER_ITEM_DESCRIPTION
+		,vbap.CHARG  as BATCH_NUMBER
+		,vbap.MATKL  as MATERIAL_GROUP_CODE
+		,vbap.VRKME  as SALES_UNIT_OF_MEASURE_CODE
+		,vbap.KWMENG as ORDER_ITEM_QUANTITY
+		,vbap.NETWR  as ORDER_ITEM_NET_VALUE_AMOUNT
+		,scheduled.CONFIRM_ITEM_QUANTITY
+		,vbap.WERKS  as PLANT_CODE 
+		,t001w.NAME1 as PLANT_NAME 
+		,vbap.VSTEL  as SHIPPING_POINT_CODE 
+		,tvstt.VTEXT as SHIPPING_POINT_DESCRIPTION 
+		,vbap.LPRIO  as DELIVERY_PRIORITY_NUMBER 
+		,tprit.BEZEI as DELIVERY_PRIORITY_DESCRIPTION
+		,vbap.ABGRU  as REJECTION_REASON_CODE 
+		,tvagt.BEZEI as REJECTION_REASON_DESCRIPTION
+		,TO_TIMESTAMP( vbap.ERDAT || ' ' || vbap.ERZET ) as ORDER_ITEM_ROW_INSERT_TIMESTAMP 
+		,vbap.OPTYPE as ACTION_TYPE 
+		,vbap.OPTIME as ROW_UPDATE_TIMESTAMP
+		,vbap.MWSBP  as ORDER_ITEM_TAX_AMOUNT 
+		,vbap.LGORT  as STORAGE_LOCATION_CODE
+		,vbap.MEINS  as BASE_UNIT_OF_MEASURE_CODE 
+		,case
+			when vbap.UMVKN is null then null
+			when vbap.UMVKN = 0 then null
+			else ( vbap.KWMENG * vbap.UMVKZ ) / vbap.UMVKN
+			end      as BASE_UNIT_ORDER_ITEM_QUANTITY 
+		,case
+			when vbap.UMVKN is null then null
+			when vbap.UMVKN = 0 then null
+			else ( scheduled.CONFIRM_ITEM_QUANTITY * vbap.UMVKZ ) / vbap.UMVKN
+			end  AS BASE_UNIT_CONFIRM_ITEM_QUANTITY 
+		,vbap.UEPOS  as HIGHER_LEVEL_ORDER_ITEM_NUMBER 
+		,vbap.GRKOR  as DELIVERY_GROUP_NUMBER 
+		,vbap.POSEX  as PURCHASE_ORDER_LINE_ITEM_NUMBER 
+		,vbap.VKAUS  as USAGE_CODE 
+		,tvlvt.BEZEI as USAGE_DESCRIPTION
+		,vbap.ZMENG  as TARGET_QUANTITY 
+		,vbap.ZIEME  as TARGET_UNIT_OF_MEASURE_CODE
+	from DS21.ECCP08.\"inbound.ecc.p08.dv.conv::DV_VBAP\" as vbap
+	join DS21.ECCP08.\"inbound.ecc.p08.dv.conv::DV_TVAPT\" as tvapt
+		on  tvapt.OPSYS = vbap.OPSYS
+		and tvapt.MANDT = vbap.MANDT
+		and tvapt.OPTYPE <> 'D'
+		and tvapt.PSTYV = vbap.PSTYV
+	left join DS21.ECCP08.\"inbound.ecc.p08.dv.conv::DV_T001W\" as t001w
+		on  t001w.OPSYS = vbap.OPSYS
+		and t001w.MANDT = vbap.MANDT
+		and t001w.OPTYPE <> 'D'
+		and t001w.WERKS = vbap.WERKS
+	left join DS21.ECCP08.\"inbound.ecc.p08.dv.conv::DV_TVSTT\" as tvstt
+		on  tvstt.OPSYS = vbap.OPSYS
+		and tvstt.MANDT = vbap.MANDT
+		and tvstt.SPRAS = tvapt.SPRAS
+		and tvstt.OPTYPE <> 'D'
+		and tvstt.VSTEL = vbap.VSTEL
+	left join DS21.ECCP08.\"inbound.ecc.p08.dv::DV_TPRIT\" as tprit
+		on  tprit.OPSYS = vbap.OPSYS
+		and tprit.MANDT = vbap.MANDT
+		and tprit.SPRAS = tvapt.SPRAS
+		and tprit.OPTYPE <> 'D'
+		and tprit.LPRIO = vbap.LPRIO
+	left join DS21.ECCP08.\"inbound.ecc.p08.dv.conv::DV_TVAGT\" as tvagt
+		on  tvagt.OPSYS = vbap.OPSYS
+		and tvagt.MANDT = vbap.MANDT
+		and tvagt.SPRAS = tvapt.SPRAS
+		and tvagt.OPTYPE <> 'D'
+		and tvagt.ABGRU = vbap.ABGRU
+	left join SCHEDULED as scheduled
+		on  scheduled.SOURCE_SYSTEM_NAME = vbap.OPSYS
+		and scheduled.CLIENT_NUMBER = vbap.MANDT
+		and scheduled.ORDER_NUMBER = vbap.VBELN
+		and scheduled.ORDER_ITEM_NUMBER = vbap.POSNR
+	left join DS21.ECCP08.\"inbound.ecc.p08.dv.conv::DV_TVLVT\" AS tvlvt
+		on  tvlvt.OPSYS = vbap.OPSYS
+		and tvlvt.MANDT = vbap.MANDT
+		and tvlvt.SPRAS = tvapt.SPRAS
+		and tvlvt.OPTYPE <> 'D'
+		and tvlvt.ABRVW = vbap.VKAUS
+	where   vbap.MANDT = '430'
+		and vbap.OPTYPE <> 'D'
+		and tvapt.SPRAS = 'E'
+	),
+	
+MATERIAL as (
+	select
+		DRIVER.SOURCE_SYSTEM_NAME
+		,DRIVER.CLIENT_NUMBER
+		,DRIVER.ORDER_NUMBER
+		,DRIVER.ORDER_ITEM_NUMBER
+		,marm.MEINH as STANDARD_UNIT_OF_MEASURE_CODE
+	from DRIVER
+	join DS21.ECCP08.\"inbound.ecc.p08.dv::DV_MARM\" AS marm
+		on  marm.OPSYS = DRIVER.SOURCE_SYSTEM_NAME
+		and marm.MANDT = DRIVER.CLIENT_NUMBER
+		and marm.MATNR = DRIVER.MATERIAL_NUMBER
+		and marm.MEINH = DRIVER.SALES_UNIT_OF_MEASURE_CODE
+		and marm.OPTYPE <> 'D'
+	),
+
+PURCHASE_ORDER as (
+	select
+		DRIVER.SOURCE_SYSTEM_NAME
+		,DRIVER.CLIENT_NUMBER
+		,DRIVER.ORDER_NUMBER
+		,DRIVER.ORDER_ITEM_NUMBER
+		,vbkd.VALDT as ORDER_ITEM_FIXED_VALUE_DATE
+		,vbkd.ZTERM as ORDER_ITEM_PAYMENT_TERMS_CODE
+		,vbkd.BSARK as ORDER_ITEM_PURCHASE_ORDER_TYPE_CODE
+		,vbkd.IHREZ as ITEM_CUSTOMER_ORDER_REFERENCE_CODE
+	from DRIVER
+	join DS21.ECCP08.\"inbound.ecc.p08.dv.conv::DV_VBKD\" as vbkd 
+		on  vbkd.OPSYS = DRIVER.SOURCE_SYSTEM_NAME 
+		and vbkd.MANDT = DRIVER.CLIENT_NUMBER 
+		and vbkd.VBELN = DRIVER.ORDER_NUMBER 
+		and vbkd.POSNR = DRIVER.ORDER_ITEM_NUMBER
+		and vbkd.OPTYPE <> 'D'
+	)
+
+SELECT
+	base.SOURCE_SYSTEM_NAME
+	,base.CLIENT_NUMBER
+	,base.LANGUAGE_CODE
+	,base.ORDER_NUMBER 
+	,base.ORDER_ITEM_NUMBER 
+	,base.ORDER_ITEM_CATEGORY_CODE 
+	,base.ORDER_ITEM_CATEGORY_DESCRIPTION 
+	,base.MATERIAL_NUMBER 
+	,base.ORDER_ITEM_DESCRIPTION 
+	,base.BATCH_NUMBER 
+	,base.MATERIAL_GROUP_CODE 
+	,base.SALES_UNIT_OF_MEASURE_CODE 
+	,base.ORDER_ITEM_QUANTITY 
+	,base.CONFIRM_ITEM_QUANTITY 
+	,material.STANDARD_UNIT_OF_MEASURE_CODE 
+	,cast( null as decimal ) AS STANDARD_UNIT_ORDER_ITEM_QUANTITY 
+	,cast( null as decimal ) AS STANDARD_UNIT_CONFIRM_ITEM_QUANTITY 
+	,base.ORDER_ITEM_NET_VALUE_AMOUNT 
+	,cast( null as decimal ) AS STANDARD_CURRENCY_ORDER_ITEM_NET_VALUE_AMOUNT 
+	,purchase_order.ORDER_ITEM_FIXED_VALUE_DATE 
+	,CURRENT_DATE AS ESTIMATED_AVAILABILITY_DATE 
+	,CURRENT_DATE AS FIRST_DELIVERY_DATE 
+	,base.PLANT_CODE 
+	,base.PLANT_NAME 
+	,base.SHIPPING_POINT_CODE
+	,base.SHIPPING_POINT_DESCRIPTION 
+	,base.DELIVERY_PRIORITY_NUMBER 
+	,base.DELIVERY_PRIORITY_DESCRIPTION 
+	,'?' AS ORDER_ITEM_DELIVERY_STATUS_CODE 
+	,'?' AS ORDER_ITEM_DELIVERY_STATUS_DESCRIPTION 
+	,base.REJECTION_REASON_CODE 
+	,base.REJECTION_REASON_DESCRIPTION 
+	,'?' AS ORDER_ITEM_CUSTOMER_GROUP_CODE 
+	,'?' AS ORDER_ITEM_CUSTOMER_GROUP_DESCRIPTION 
+	,purchase_order.ORDER_ITEM_PAYMENT_TERMS_CODE 
+	,tvzbt.VTEXT AS ORDER_ITEM_PAYMENT_TERMS_DESCRIPTION 
+	,purchase_order.ORDER_ITEM_PURCHASE_ORDER_TYPE_CODE 
+	,t176t.VTEXT AS ORDER_ITEM_PURCHASE_ORDER_TYPE_DESCRIPTION 
+	,base.ORDER_ITEM_ROW_INSERT_TIMESTAMP 
+	,base.ACTION_TYPE 
+	,base.ROW_UPDATE_TIMESTAMP
+	,base.ORDER_ITEM_TAX_AMOUNT 
+	,base.STORAGE_LOCATION_CODE 
+	,cast( null as decimal ) AS GRAIN_PRICE_BASE_PRICE_AMOUNT 
+	,cast( null as decimal ) AS GRAIN_PRICE_FINAL_PRICE_AMOUNT 
+	,cast( null as decimal ) AS GRAIN_PRICE_OPERATIVE_PRICE_AMOUNT 
+	,cast( null as decimal ) AS GRAIN_PRICE_TAX_AMOUNT 
+	,cast( null as decimal ) AS GRAIN_PRICE_COMMISSION_AMOUNT 
+	,null AS ITEM_DELIVERY_BLOCK_CODE 
+	,null AS ITEM_DELIVERY_BLOCK_DESCRIPTION 
+	,base.BASE_UNIT_OF_MEASURE_CODE 
+	,base.BASE_UNIT_ORDER_ITEM_QUANTITY 
+	,base.BASE_UNIT_CONFIRM_ITEM_QUANTITY 
+	,base.HIGHER_LEVEL_ORDER_ITEM_NUMBER 
+	,base.DELIVERY_GROUP_NUMBER 
+	,base.PURCHASE_ORDER_LINE_ITEM_NUMBER 
+	,base.USAGE_CODE 
+	,base.USAGE_DESCRIPTION 
+	,purchase_order.ITEM_CUSTOMER_ORDER_REFERENCE_CODE 
+	,base.TARGET_QUANTITY 
+	,base.TARGET_UNIT_OF_MEASURE_CODE
+from BASE as base
+left join MATERIAL as material
+	on  material.SOURCE_SYSTEM_NAME = base.SOURCE_SYSTEM_NAME
+	and material.CLIENT_NUMBER = base.CLIENT_NUMBER
+	and material.ORDER_NUMBER = base.ORDER_NUMBER
+	and material.ORDER_ITEM_NUMBER = base.ORDER_ITEM_NUMBER
+left join PURCHASE_ORDER as purchase_order
+	on  purchase_order.SOURCE_SYSTEM_NAME = base.SOURCE_SYSTEM_NAME
+	and purchase_order.CLIENT_NUMBER = base.CLIENT_NUMBER
+	and purchase_order.ORDER_NUMBER = base.ORDER_NUMBER
+	and purchase_order.ORDER_ITEM_NUMBER = base.ORDER_ITEM_NUMBER
+left join DS21.ECCP08.\"inbound.ecc.p08.dv.conv::DV_TVZBT\" AS tvzbt
+	on  tvzbt.OPSYS = base.SOURCE_SYSTEM_NAME
+	and tvzbt.MANDT = base.CLIENT_NUMBER
+	and tvzbt.SPRAS = base.LANGUAGE_CODE
+	and tvzbt.OPTYPE <> 'D'
+	and tvzbt.ZTERM = purchase_order.ORDER_ITEM_PAYMENT_TERMS_CODE
+left join DS21.ECCP08.\"inbound.ecc.p08.dv.conv::DV_T176T\" AS t176t
+	on  t176t.OPSYS = base.SOURCE_SYSTEM_NAME
+	and t176t.MANDT = base.CLIENT_NUMBER
+	and t176t.SPRAS = base.LANGUAGE_CODE
+	and t176t.OPTYPE <> 'D'
+	and t176t.BSARK = purchase_order.ORDER_ITEM_PURCHASE_ORDER_TYPE_CODE
+"
+;
